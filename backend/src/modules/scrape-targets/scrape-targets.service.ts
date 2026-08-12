@@ -130,8 +130,13 @@ export class ScrapeTargetsService {
       .groupBy('o.scrapeTargetId')
       .getRawMany<{ targetId: string; count: string }>();
 
-    // Pending = no action taken: not dismissed and not added to recruitment by
-    // the requesting user.
+    // Pending = no action taken: not dismissed, not added to recruitment by the
+    // requesting user, and not "applied elsewhere" (the same role already added
+    // from another portal). The elsewhere match mirrors the frontend offerKey:
+    // lowercase, drop parenthesised/bracketed suffixes, collapse punctuation.
+    const normalize = (column: string): string =>
+      `trim(regexp_replace(regexp_replace(regexp_replace(regexp_replace(lower(${column}), '\\([^)]*\\)', ' ', 'g'), '\\[[^\\]]*\\]', ' ', 'g'), '[^a-z0-9ąćęłńóśźż]+', ' ', 'g'), '\\s+', ' ', 'g'))`;
+
     const pending = await this.offers
       .createQueryBuilder('o')
       .select('o.scrapeTargetId', 'targetId')
@@ -141,6 +146,12 @@ export class ScrapeTargetsService {
       .andWhere('o.dismissed = false')
       .andWhere(
         'NOT EXISTS (SELECT 1 FROM "recruitments" r WHERE r."jobOfferId" = o.id AND r."userId" = :userId)',
+        { userId },
+      )
+      .andWhere(
+        `NOT EXISTS (SELECT 1 FROM "recruitments" re WHERE re."userId" = :userId AND ${normalize(
+          're."company"',
+        )} = ${normalize('o.company')} AND ${normalize('re."position"')} = ${normalize('o.title')})`,
         { userId },
       )
       .groupBy('o.scrapeTargetId')
