@@ -154,7 +154,14 @@ export class JobsListPage implements OnInit, OnDestroy {
         .replace(/[^a-z0-9ąćęłńóśźż]+/gi, ' ')
         .replace(/\s+/g, ' ')
         .trim();
-    return `${norm(company)}|${norm(title)}`;
+    // Token set: unique words, order-independent, so "Senior Java Developer"
+    // and "Java Developer (Senior)" produce the same key. Mirrors the backend
+    // tokenSet used for the scraper pending count.
+    const tokenSet = (s: string): string =>
+      Array.from(new Set(norm(s).split(' ').filter(Boolean)))
+        .sort()
+        .join(' ');
+    return `${tokenSet(company)}|${tokenSet(title)}`;
   }
 
   protected columns: TableColumn<JobRow>[] = [];
@@ -174,6 +181,12 @@ export class JobsListPage implements OnInit, OnDestroy {
   protected readonly trackById = (job: JobRow): string => job.id;
 
   protected readonly rowClass = (job: JobRow): string => {
+    // Handled offers (applied here or already sent on another portal) win over
+    // the stale/dismissed styling — a sent offer must never read as active.
+    if (job.applied || job.appliedElsewhere) {
+      return 'job-row-applied';
+    }
+
     const classes: string[] = [];
     if (job.dismissed) {
       classes.push('job-row-dismissed');
@@ -181,10 +194,6 @@ export class JobsListPage implements OnInit, OnDestroy {
 
     if (job.staleAt) {
       classes.push('job-row-stale');
-    }
-
-    if (this.appliedJobIds().has(job.id)) {
-      classes.push('job-row-applied');
     }
     return classes.join(' ');
   };

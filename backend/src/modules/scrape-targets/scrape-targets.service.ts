@@ -130,12 +130,22 @@ export class ScrapeTargetsService {
       .groupBy('o.scrapeTargetId')
       .getRawMany<{ targetId: string; count: string }>();
 
-    // Pending = no action taken: not dismissed, not added to recruitment by the
+    // Pending = still active with no action taken. Mirrors the frontend
+    // hasStatus check, so the card count matches the offers that actually show
+    // as active: not stale, not dismissed, not added to recruitment by the
     // requesting user, and not "applied elsewhere" (the same role already added
     // from another portal). The elsewhere match mirrors the frontend offerKey:
     // lowercase, drop parenthesised/bracketed suffixes, collapse punctuation.
     const normalize = (column: string): string =>
       `trim(regexp_replace(regexp_replace(regexp_replace(regexp_replace(lower(${column}), '\\([^)]*\\)', ' ', 'g'), '\\[[^\\]]*\\]', ' ', 'g'), '[^a-z0-9ąćęłńóśźż]+', ' ', 'g'), '\\s+', ' ', 'g'))`;
+
+    // Token-set key: split the normalized text into words, drop duplicates and
+    // ignore order, so "Senior Java Developer" and "Java Developer (Senior)"
+    // collapse to the same key. Both sides of each comparison use it.
+    const tokenSet = (column: string): string =>
+      `(SELECT string_agg(DISTINCT tok, ' ' ORDER BY tok) FROM unnest(string_to_array(${normalize(
+        column,
+      )}, ' ')) AS tok WHERE tok <> '')`;
 
     const pending = await this.offers
       .createQueryBuilder('o')
@@ -144,14 +154,15 @@ export class ScrapeTargetsService {
       .where('o.scrapeTargetId IN (:...ids)', { ids })
       .andWhere('o.deletedAt IS NULL')
       .andWhere('o.dismissed = false')
+      .andWhere('o.staleAt IS NULL')
       .andWhere(
         'NOT EXISTS (SELECT 1 FROM "recruitments" r WHERE r."jobOfferId" = o.id AND r."userId" = :userId)',
         { userId },
       )
       .andWhere(
-        `NOT EXISTS (SELECT 1 FROM "recruitments" re WHERE re."userId" = :userId AND ${normalize(
+        `NOT EXISTS (SELECT 1 FROM "recruitments" re WHERE re."userId" = :userId AND ${tokenSet(
           're."company"',
-        )} = ${normalize('o.company')} AND ${normalize('re."position"')} = ${normalize('o.title')})`,
+        )} = ${tokenSet('o.company')} AND ${tokenSet('re."position"')} = ${tokenSet('o.title')})`,
         { userId },
       )
       .groupBy('o.scrapeTargetId')
